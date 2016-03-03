@@ -9,6 +9,7 @@ from django.utils.translation import ugettext_lazy as _
 from . import conf
 from . import api
 from .utils import load_object
+import json
 
 
 logger = logging.getLogger(__name__)
@@ -18,21 +19,57 @@ def get_device_model():
     return load_object(conf.GCM_DEVICE_MODEL)
 
 
-class GCMMessage(api.GCMMessage):
+class GCMMessage(models.Model, api.GCMMessage):
+
+    SENT = "SENT"
+    PENDING = "PENDING"
+    FAILED = "FAILED"
+    NONE = "NONE"
+
+    STATUS_CHOICES = (
+        (SENT, "Sent"),
+        (PENDING, "Pending"),
+        (FAILED, "Failed"),
+        (NONE, "None"))
+
+    topic = models.CharField(
+        verbose_name=_("Topic"), max_length=50, blank=True)
+    created = models.DateTimeField(
+        verbose_name=_("Created"), auto_now_add=True)
+    message = models.TextField(
+        verbose_name=_("Message"))
+    response = models.CharField(
+        verbose_name=_("Response"), max_length=255)
+    status = models.CharField(
+        verbose_name=_("Status"), max_length=16, choices=STATUS_CHOICES, default=NONE)
+    devices = models.ManyToManyField('gcm.Device')
+    #priority = models.CharField(verbose_name=_("Priority"), max_length=255)
+    #content_available = models.CharField(verbose_name=_("Available Content"), max_length=255)
+
     GCM_INVALID_ID_ERRORS = ['InvalidRegistration',
                              'NotRegistered',
                              'MismatchSenderId']
 
-    def send(self, data, registration_ids=None, **kwargs):
+    def send(self, data, registration_ids=None, topic=None, **kwargs):
+        self.status = self.PENDING
+        self.message = json.dumps(data)
+        self.topic = ""
+        if topic:
+            self.topic = topic
+            kwargs['to'] = "/topics/{topic}".format(topic=topic)
+        self.save()
         response = super(GCMMessage, self).send(
             data, registration_ids=registration_ids, **kwargs)
         chunks = [response] if not isinstance(response, list) else response
         for chunk in chunks:
             self.post_send(*chunk)
+
+        self.save()
         return response
 
     def post_send(self, registration_ids, response):
-        if response.get('failure'):
+        if 'error' in response or 'failure' in response:
+            self.status = self.FAILED
             invalid_messages = dict(filter(
                 lambda x: x[1].get('error') in self.GCM_INVALID_ID_ERRORS,
                 zip(registration_ids, response.get('results'))))
@@ -41,7 +78,12 @@ class GCMMessage(api.GCMMessage):
             for device in get_device_model().objects.filter(reg_id__in=regs):
                 device.mark_inactive(
                     error_message=invalid_messages[device.reg_id]['error'])
+        else:
+            self.status = self.SENT
 
+
+    def __str__(self):
+        return self.message
 
 class DeviceQuerySet(QuerySet):
 

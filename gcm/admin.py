@@ -5,7 +5,7 @@ from django.template import RequestContext
 from django.utils.translation import ugettext_lazy as _
 
 from .forms import MessageForm
-from .models import get_device_model
+from .models import get_device_model, GCMMessage
 
 Device = get_device_model()
 
@@ -65,3 +65,4 @@ class DeviceAdmin(admin.ModelAdmin):
 
 
 admin.site.register(Device, DeviceAdmin)
+admin.site.register(GCMMessage)
